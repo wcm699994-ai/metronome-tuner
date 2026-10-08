@@ -2,6 +2,8 @@
 
 一个零依赖、单文件（`index.html`）的节拍器 + 调音器，所有音频合成、语音与测音都在浏览器本地完成，不联网、不上传任何数据。
 
+MIT License · 直接双击 `index.html` 即可使用。
+
 ## 功能
 
 **节拍器**
@@ -50,7 +52,8 @@ tools/build-voice-sprite.js 裁剪静音 → 拼接 sprite → 注入 index.html
 
 `tools/voice-wav/`、`tools/voice-wav-fast/`（原始 WAV）与 `tools/voice-sprite*.wav`（调试用 sprite）为构建产物，已在 `.gitignore` 中忽略。
 
-## 说明
+## 许可
 
-- 语音素材由 Microsoft Windows SAPI5 语音引擎合成，若要在分发场景使用请自行确认相应许可；改动语速/采样率后重跑脚本即可替换。
-- 调音器的听音与节拍器的所有音色均为浏览器本地合成，无第三方资源、无网络请求。
+代码以 **MIT License** 开源，详见 `LICENSE`。
+
+内嵌的语音素材由本机 Microsoft Windows SAPI5 语音引擎合成，不属于代码本体：若你要在分发场景复用这些音频，请自行确认相应许可，或运行 `tools/` 下的脚本换成自己的音源（脚本参数见上文）。调音器的听音与节拍器的所有音色均为浏览器本地实时合成，无第三方资源、无网络请求。
