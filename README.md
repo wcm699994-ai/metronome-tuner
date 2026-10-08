@@ -9,7 +9,7 @@
 - 每拍细分 ×1–×4（八分、三连、十六分），点击圆点可逐拍设置 强拍/中拍/静音，自定义节奏型
 - BPM 20–300（滑杆/数字/±），快捷键：空格 开始/停止
 - 音色：电子哔声、木鱼、鼓组、牛铃、拍手、铃铛（全部为 Web Audio 实时合成），另有「仅人声」
-- 人声读拍：**内置人声采样**（中文 / English 数字 1–12），由音频时钟采样级精确调度；BPM ≥180 时只报每小节第一拍
+- 人声读拍：**内置人声采样**（中文 / English 数字 1–12），由音频时钟采样级精确调度；BPM 超过 100 自动切换更短的快速读拍版本（词不会被下一拍截断），BPM ≥180 只报每小节第一拍
 
 **调音器**
 - 麦克风实时测音（自相关算法，低至约 34Hz，覆盖贝斯低音弦）
@@ -30,23 +30,25 @@ Web Speech API 没有调度能力（`speak()` 是入队而非定时），其状�
 ## 重新生成语音素材（可选）
 
 ```powershell
-# 1) 生成 24 个 WAV（需要 Windows + 已安装对应语音包）
-powershell -ExecutionPolicy Bypass -File tools/gen-voice.ps1
-# 2) 裁剪静音、拼接 sprite 并注入 index.html（需要 Node.js）
+# 1) 生成两套共 48 个 WAV（需要 Windows + 已安装对应语音包）
+#    Rate 0 = 正常读拍（≤100 BPM 使用）；Rate 2 = 快速读拍（>100 BPM 使用，词更短）
+powershell -ExecutionPolicy Bypass -File tools/gen-voice.ps1 -Rate 0 -OutDir tools/voice-wav
+powershell -ExecutionPolicy Bypass -File tools/gen-voice.ps1 -Rate 2 -OutDir tools/voice-wav-fast
+# 2) 裁剪静音、拼接两套 sprite 并注入 index.html（需要 Node.js）
 node tools/build-voice-sprite.js
 ```
 
-可调项：`tools/gen-voice.ps1` 里的 `$synth.Rate`（语速 -10..10）；`tools/build-voice-sprite.js` 里的 `RATE`（采样率，8000 可让体积减半）、`THRESH`（静音门限）、`LEAD_KEEP`（保留起音余量，默认 8ms）。
+可调项：`tools/build-voice-sprite.js` 里的 `BPM_FAST`（两套素材的切换阈值，默认 >100）、`RATE`（采样率，8000 可让体积减半）、`THRESH`（静音门限）、`LEAD_KEEP`（保留起音余量，默认 8ms）；语速由 `tools/gen-voice.ps1 -Rate`（-10..10）决定。
 
 ## 文件结构
 
 ```
-index.html                  单文件应用（含 base64 内嵌语音 sprite，约 500KB）
-tools/gen-voice.ps1         用 Windows SAPI5 生成数字语音 WAV
+index.html                  单文件应用（含 base64 内嵌的两套语音 sprite，约 900KB）
+tools/gen-voice.ps1         用 Windows SAPI5 生成数字语音 WAV（-Rate / -OutDir 可生成多套）
 tools/build-voice-sprite.js 裁剪静音 → 拼接 sprite → 注入 index.html
 ```
 
-`tools/voice-wav/`（原始 WAV）与 `tools/voice-sprite.wav`（调试用 sprite）为构建产物，已在 `.gitignore` 中忽略。
+`tools/voice-wav/`、`tools/voice-wav-fast/`（原始 WAV）与 `tools/voice-sprite*.wav`（调试用 sprite）为构建产物，已在 `.gitignore` 中忽略。
 
 ## 说明
 

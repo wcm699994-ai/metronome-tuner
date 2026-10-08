@@ -1,20 +1,24 @@
 // tools/build-voice-sprite.js
-// Trims leading/trailing silence from the WAVs produced by tools/gen-voice.ps1,
-// concatenates them into one 16 kHz mono sprite, and injects it into index.html
-// as `const VOICE_SPRITE={...}` (base64 PCM + per-word sample offsets).
+// Trims leading/trailing silence from the WAVs produced by tools/gen-voice.ps1 and injects
+// them into index.html as `const VOICE_SPRITE={...}` (base64 PCM + per-word sample offsets).
 //
-// Why a sprite with trimmed words: the metronome schedules voice samples on the
-// Web Audio clock with start(when, offset, duration), so each word must begin at
-// its first audible sample. Raw SAPI output carries 100-160 ms of leading silence
-// (and ~750 ms of trailing silence), which would otherwise delay every count.
+// Two asset sets are embedded:
+//   set 0 - normal speech (gen-voice.ps1 -Rate 0), used at or below VOICE_SPRITE.bpm4fast
+//   set 1 - brisk speech  (gen-voice.ps1 -Rate 2), used above it, so each spoken word still
+//           fits inside a short beat instead of being cut off by the next count
+//   set[s].bpm4fast - the BPM boundary between the two sets
+//
+// Why the words are trimmed: playback is scheduled with start(when, offset, duration) on the
+// Web Audio clock, so a word must begin at its first audible sample. Raw SAPI output carries
+// 100-160 ms of leading silence (and ~750 ms of trailing silence), which would delay every
+// count by roughly 150 ms.
 const fs = require('fs');
 const path = require('path');
 
 const ROOT = path.join(__dirname, '..');
-const WAV_DIR = path.join(__dirname, 'voice-wav');
 const HTML_PATH = path.join(ROOT, 'index.html');
-const SPRITE_WAV = path.join(__dirname, 'voice-sprite.wav');
 const PLACEHOLDER = 'const VOICE_SPRITE=null;';
+const BPM_FAST = 100;
 
 const RATE = 16000;
 const THRESH = 0.004;                            // ~ -48 dBFS silence gate
@@ -22,6 +26,11 @@ const LEAD_KEEP = Math.round(RATE * 0.008);      // keep 8 ms so the attack is n
 const TAIL_KEEP = Math.round(RATE * 0.030);      // keep 30 ms natural decay
 const GAP = Math.round(RATE * 0.030);            // silence between words in the sprite
 const FADE = Math.round(RATE * 0.003);           // 3 ms fade to avoid clicks
+
+const SETS = [
+  { dir: path.join(__dirname, 'voice-wav'), wav: path.join(__dirname, 'voice-sprite.wav') },
+  { dir: path.join(__dirname, 'voice-wav-fast'), wav: path.join(__dirname, 'voice-sprite-fast.wav') }
+];
 
 function readWav(file) {
   const b = fs.readFileSync(file);
@@ -79,47 +88,51 @@ function writeWav(samples) {
   return buf;
 }
 
-const LANG = { zh: 'zh', en: 'en' };
-const words = {};
-const chunks = [];
-const report = [];
-let cursor = 0;
-
-for (const lang of Object.keys(LANG)) {
-  words[lang] = [];
-  for (let n = 1; n <= 12; n++) {
-    const file = path.join(WAV_DIR, lang + '_' + n + '.wav');
-    if (!fs.existsSync(file)) throw new Error('missing ' + file + ' - run tools/gen-voice.ps1 first');
-    const raw = readWav(file);
-    const cut = applyFade(trimSilence(raw));
-    const offset = cursor;
-    chunks.push(cut);
-    cursor += cut.length;
-    words[lang].push([offset, cut.length]);
-    const gap = new Int16Array(GAP);
-    chunks.push(gap);
-    cursor += GAP;
-    report.push('  ' + lang + ' ' + n + ': ' + (raw.length / RATE).toFixed(3) + 's -> ' +
-      (cut.length / RATE).toFixed(3) + 's (trimmed ' + ((raw.length - cut.length) / RATE * 1000).toFixed(0) + ' ms silence)');
+function buildSet(set) {
+  const words = { zh: [], en: [] };
+  const chunks = [];
+  let cursor = 0;
+  let longest = 0;
+  for (const lang of ['zh', 'en']) {
+    for (let n = 1; n <= 12; n++) {
+      const file = path.join(set.dir, lang + '_' + n + '.wav');
+      if (!fs.existsSync(file)) throw new Error('missing ' + file + ' - run tools/gen-voice.ps1 first');
+      const raw = readWav(file);
+      const cut = applyFade(trimSilence(raw));
+      words[lang].push([cursor, cut.length]);
+      chunks.push(cut);
+      cursor += cut.length;
+      chunks.push(new Int16Array(GAP));
+      cursor += GAP;
+      longest = Math.max(longest, cut.length / RATE);
+    }
   }
+  const total = new Int16Array(cursor);
+  let at = 0;
+  for (const c of chunks) { total.set(c, at); at += c.length; }
+  const wav = writeWav(total);
+  fs.writeFileSync(set.wav, wav);
+  return {
+    payload: { rate: RATE, data: wav.toString('base64'), words: words },
+    seconds: total.length / RATE, kb: wav.length / 1024, longest: longest, dir: path.basename(set.dir)
+  };
 }
 
-const total = new Int16Array(cursor);
-let at = 0;
-for (const c of chunks) { total.set(c, at); at += c.length; }
-
-const wav = writeWav(total);
-fs.writeFileSync(SPRITE_WAV, wav);
-const b64 = wav.toString('base64');
+const built = SETS.map(buildSet);
+const payload = { bpm4fast: BPM_FAST, sets: built.map(function (b) { return b.payload; }) };
+const b64kb = built.reduce(function (s, b) { return s + b.payload.data.length; }, 0) / 1024;
 
 const html = fs.readFileSync(HTML_PATH, 'utf8');
-const literal = 'const VOICE_SPRITE=' + JSON.stringify({ rate: RATE, data: b64, words: words }) + ';';
+const literal = 'const VOICE_SPRITE=' + JSON.stringify(payload) + ';';
 // Idempotent: replaces the placeholder on first injection, the existing literal on rebuilds.
 const target = /const VOICE_SPRITE=[^;]*;/;
 if (!html.includes(PLACEHOLDER) && !target.test(html)) throw new Error('VOICE_SPRITE placeholder not found in index.html');
 fs.writeFileSync(HTML_PATH, html.replace(target, literal));
 
-console.log(report.join('\n'));
-console.log('sprite: ' + (total.length / RATE).toFixed(2) + 's audio, ' +
-  (wav.length / 1024).toFixed(0) + ' KB wav -> ' + (b64.length / 1024).toFixed(0) + ' KB base64 embedded');
-console.log('wrote ' + SPRITE_WAV + ' and injected VOICE_SPRITE into index.html');
+built.forEach(function (b, i) {
+  console.log('set ' + i + ' (' + b.dir + '): ' + b.seconds.toFixed(2) + 's audio, longest word ' +
+    (b.longest * 1000).toFixed(0) + 'ms, ' + b.kb.toFixed(0) + ' KB wav -> ' +
+    (b.payload.data.length / 1024).toFixed(0) + ' KB base64');
+});
+console.log('total embedded: ' + b64kb.toFixed(0) + ' KB base64; set switch at bpm > ' + BPM_FAST);
+console.log('injected VOICE_SPRITE into index.html');

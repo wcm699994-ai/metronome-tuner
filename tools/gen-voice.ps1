@@ -2,7 +2,10 @@
 # Generates 24 counting-voice WAV files (zh 1-12, en 1-12) with Windows SAPI5 voices.
 # ASCII-only on purpose: Windows PowerShell 5.1 reads .ps1 as ANSI when there is no BOM,
 # so Chinese characters are built from Unicode code points instead of literals.
-param([string]$OutDir = (Join-Path $PSScriptRoot 'voice-wav'))
+param(
+    [string]$OutDir = (Join-Path $PSScriptRoot 'voice-wav'),
+    [int]$Rate = 0   # SAPI speech rate, -10..10; 2 = brisk, used for the >100 BPM asset set
+)
 
 Add-Type -AssemblyName System.Speech
 New-Item -ItemType Directory -Force -Path $OutDir | Out-Null
@@ -22,7 +25,7 @@ $zh += [string]([char]0x5341 + [char]0x4E8C)
 
 $en = @('one', 'two', 'three', 'four', 'five', 'six', 'seven', 'eight', 'nine', 'ten', 'eleven', 'twelve')
 
-$synth.Rate = 0
+$synth.Rate = $Rate
 $synth.SelectVoice('Microsoft Huihui Desktop')
 for ($i = 0; $i -lt 12; $i++) {
     $path = Join-Path $OutDir ('zh_{0}.wav' -f ($i + 1))
@@ -42,4 +45,4 @@ $synth.SetOutputToNull()
 $synth.Dispose()
 
 $made = (Get-ChildItem $OutDir -Filter *.wav).Count
-Write-Output ("generated {0} wav files in {1}" -f $made, $OutDir)
+Write-Output ("generated {0} wav files in {1} (rate {2})" -f $made, $OutDir, $Rate)
