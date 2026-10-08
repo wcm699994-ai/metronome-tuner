@@ -1,0 +1,8 @@
+# 构建产物：可由 tools/ 下脚本重新生成
+tools/voice-wav/
+tools/voice-sprite.wav
+
+# 编辑器/系统杂项
+.DS_Store
+Thumbs.db
+*.swp
