@@ -4,9 +4,11 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <meta name="color-scheme" content="dark">
+<meta name="theme-color" content="#0b1020">
 <title>节拍器 · 调音器</title>
 <style>
   *{box-sizing:border-box;margin:0;padding:0}
+  button,.dot{touch-action:manipulation;-webkit-tap-highlight-color:transparent;user-select:none;-webkit-user-select:none}
   :root{
     --cyan:#22d3ee; --indigo:#6366f1; --gold:#fbbf24; --green:#34d399;
     --txt:#e2e8f0; --sub:#94a3b8; --dim:#64748b; --card:rgba(15,23,42,.55);
@@ -24,7 +26,7 @@
     color:var(--sub);font-size:15px;font-weight:600;cursor:pointer;transition:.2s}
   .tab.active{background:linear-gradient(135deg,var(--cyan),var(--indigo));color:#04121f;font-weight:800}
   .card{background:var(--card);border:1px solid rgba(255,255,255,.08);border-radius:18px;
-    padding:20px;margin-bottom:16px;backdrop-filter:blur(8px);box-shadow:0 8px 30px rgba(0,0,0,.35)}
+    padding:20px;margin-bottom:16px;-webkit-backdrop-filter:blur(8px);backdrop-filter:blur(8px);box-shadow:0 8px 30px rgba(0,0,0,.35)}
   .card h3{font-size:13px;font-weight:700;color:var(--sub);letter-spacing:1px;margin-bottom:14px}
   /* ---------- 节拍器 ---------- */
   .transport{display:flex;align-items:center;justify-content:center;gap:26px;flex-wrap:wrap;padding:26px 20px}
@@ -125,11 +127,19 @@
   .notebtn:hover{border-color:var(--cyan);background:rgba(34,211,238,.1)}
   footer{text-align:center;font-size:12px;color:#475569;margin-top:26px;line-height:1.8}
   @media (max-width:560px){
-    .transport{gap:14px}
+    .transport{gap:14px;padding:20px 14px}
     #bpmNum{font-size:42px;width:90px}
-    .bpmctl{width:220px}
+    .bpmctl{width:230px}
     .dot{width:40px;height:40px}
     .tab{padding:9px 22px;font-size:14px}
+    #playBtn{width:82px;height:82px}
+    header h1{font-size:21px}
+    select{font-size:16px}
+    input[type=range]{height:7px}
+    input[type=range]::-webkit-slider-thumb{width:24px;height:24px}
+    input[type=range]::-moz-range-thumb{width:24px;height:24px}
+    .presetGrid{grid-template-columns:repeat(3,1fr)}
+    .card{padding:16px}
   }
 </style>
 </head>
@@ -298,10 +308,37 @@ function ensureCtx(){
   if(ctx) return ctx;
   ctx=new (window.AudioContext||window.webkitAudioContext)();
   master=ctx.createGain(); master.gain.value=vol; master.connect(ctx.destination);
+  ctx.onstatechange=()=>{ if(playing&&ctx.state==='suspended') ctx.resume(); }; // iOS 切后台/来电中断后自动恢复
   noiseBuf=ctx.createBuffer(1,ctx.sampleRate,ctx.sampleRate);
   const d=noiseBuf.getChannelData(0);
   for(let i=0;i<d.length;i++) d[i]=Math.random()*2-1;
   return ctx;
+}
+function unlockAudio(){ // 移动端自动播放策略：首次手势内恢复音频上下文（iOS/Android）
+  if(ctx&&ctx.state==='suspended') ctx.resume();
+}
+document.addEventListener('pointerdown',unlockAudio,true);
+document.addEventListener('touchstart',unlockAudio,true);
+document.addEventListener('visibilitychange',()=>{ // 从后台返回：恢复音频并续借屏幕常亮
+  if(document.hidden) return;
+  unlockAudio();
+  if(playing) requestWakeLock();
+});
+let wakeLock=null;
+async function requestWakeLock(){ // 播放时申请屏幕常亮：手机锁屏后浏览器会冻结定时器，节拍会停
+  try{
+    if(!('wakeLock' in navigator)) return;
+    wakeLock=await navigator.wakeLock.request('screen');
+    wakeLock.addEventListener('release',()=>{wakeLock=null;});
+  }catch(e){ wakeLock=null; } // 非 HTTPS 或不支持时静默跳过
+}
+function releaseWakeLock(){ try{ wakeLock&&wakeLock.release(); }catch(e){} wakeLock=null; }
+function decodeAudioCompat(audioCtx,u8){ // 兼容旧版 Safari：回调式与 Promise 式都支持
+  return new Promise((res,rej)=>{
+    let done=false;
+    const ok=b=>{ if(!done){done=true;res(b);} }, err=e=>{ if(!done){done=true;rej(e);} };
+    try{ const p=audioCtx.decodeAudioData(u8.buffer,ok,err); if(p&&p.then) p.then(ok,err); }catch(e){ err(e); }
+  });
 }
 function tone(t,o){ // {type,f,g,dec}
   const osc=ctx.createOscillator(); osc.type=o.type||'sine';
@@ -419,7 +456,7 @@ async function ensureVoiceBuffer(){ // 解码内置人声采样；成功后语�
       const bin=atob(s.data);
       const u8=new Uint8Array(bin.length);
       for(let i=0;i<bin.length;i++) u8[i]=bin.charCodeAt(i);
-      out.push({ buffer:await ctx.decodeAudioData(u8.buffer), rate:s.rate, words:s.words });
+      out.push({ buffer:await decodeAudioCompat(ctx,u8), rate:s.rate, words:s.words });
     }
     voiceSets=out;
   }catch(e){ voiceSets=null; } // 解码失败则回退系统语音(TTS)
@@ -523,6 +560,7 @@ async function startPlay(){
   nextBeatTime=ctx.currentTime+0.12; nextBeatIdx=0;
   if(voiceOn){ ensureVoiceBuffer(); if(!voiceSets) prewarmVoice(); }
   updateVoiceStat();
+  requestWakeLock(); // 播放期间保持屏幕常亮：手机锁屏会冻结定时器，节拍会停
   schedTimer=setInterval(scheduler,25);
 }
 function stopPlay(){
@@ -530,6 +568,7 @@ function stopPlay(){
   clearInterval(schedTimer); schedTimer=null;
   flashTimers.forEach(clearTimeout); flashTimers.length=0;
   voiceRunToken++; pendingUtt=null; voiceBusyStreak=0; updateVoiceStat(); // 使在途的发声回调失效，避免停止后污染提前量
+  releaseWakeLock();
   if(hasTTS) speechSynthesis.cancel();
   $$('.dot').forEach(d=>d.classList.remove('on'));
   $('#playIcon').style.display='';
